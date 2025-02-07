@@ -90,7 +90,7 @@ def Cauchy(u,p):
          # Cache Pie_D_tensor for all necessary time steps
         tensor_cache = {}
         f_in = XDMFFile("tensorPi.xdmf")
-        for idx, s in enumerate(time_steps[:]): 
+        for idx, s in enumerate(time_steps[:]):  # Skip the last time step as it's handled separately
             Pie_D_tensor = Function(TS)
             f_in.read_checkpoint(Pie_D_tensor, "Pie_D_tensor", idx)
             tensor_cache[round(s, 3)] = Pie_D_tensor
@@ -103,7 +103,7 @@ def Cauchy(u,p):
                     integral = integral + 0.5 * dt * D_diff * Pie_D_tensor 
             else:
                     integral = integral + dt * D_diff * Pie_D_tensor
-        
+                         
         for idx, s in enumerate(my_range(round(t_star,3), round(t, 3), dt)):       
             D_diff = -mu_1/(mu_0*tau_1)*exp(-(t-s)/tau_1)-mu_2/(mu_0*tau_2)*exp(-(t-s)/tau_2)-mu_3/(mu_0*tau_3)*exp(-(t-s)/tau_3)-mu_4/(mu_0*tau_4)*exp(-(t-s)/tau_4)
             if (round(s,3) != round(t,3)):
@@ -115,7 +115,7 @@ def Cauchy(u,p):
                          
             elif round(s,3) == round(t,3): 
                  integral = integral + 0.5 * dt * D_diff * Pie_D  
-    elif ((t <= t_star) and (t > 0)):
+    elif (t > 0):
         time_steps = list(my_range(0.000, round(t-dt,3), 0.01))    
         
          # Cache Pie_D_tensor for all necessary time steps
@@ -174,7 +174,7 @@ def geometry_3d(r1,r2,h1,h2):
 
 # Create mesh and define function space ============================================
 r0 = 0.0125 #m
-h0 = 0.0087436 #m
+h0 = 0.0088319 #m
 
 facet_function = geometry_3d(r0,r0,0.0,h0)
 mesh = facet_function.mesh()
@@ -182,6 +182,21 @@ gdim = mesh.geometry().dim()
 dx = Measure("dx")
 ds = Measure("ds", domain=mesh, subdomain_data=facet_function)
 x = SpatialCoordinate(mesh)
+print('Number of nodes: ',mesh.num_vertices())
+print('Number of cells: ',mesh.num_cells())
+
+#Save the mesh to an XDMF file
+xdmf_file = XDMFFile("mesh.xdmf")
+xdmf_file.write(mesh)
+
+# mesh = Mesh()
+# mvc = MeshValueCollection("size_t", mesh, mesh.topology().dim())
+# with XDMFFile("dominio2.xdmf") as infile:
+   # infile.read(mesh)
+   
+dx = Measure("dx")
+x = SpatialCoordinate(mesh)
+
 print('Number of nodes: ',mesh.num_vertices())
 print('Number of cells: ',mesh.num_cells())
    
@@ -234,6 +249,7 @@ up = Function(V)
 # Displacement and pressure (previous value)
 up_prev = Function(V)
 up_prev = interpolate(Expression(("0.0", "0.0", "0.0", "0.0"), degree=1), V)
+#up_prev = Function(V, "out_solution.xml") 
 (u_prev, p_prev) = split(up_prev)
 u_init = project(u_prev,U)
 rotation1 = Function(TS)
@@ -266,6 +282,8 @@ gamma = Constant(1/2-2*c2/mu_0)
 
 twist = Expression(("x[0] == 0 ? sqrt(pow(x[0],2)+pow(x[1],2))/sqrt(pre_stretch) : sqrt(pow(x[0],2)+pow(x[1],2))/sqrt(pre_stretch)*cos(atan2(x[1],x[0])+theta*x[2])-x[0]", "x[0] == 0 ? sqrt(pow(x[0],2)+pow(x[1],2))/sqrt(pre_stretch) : sqrt(pow(x[0],2)+pow(x[1],2))/sqrt(pre_stretch)*sin(atan2(x[1],x[0])+theta*x[2])-x[1]", "(pre_stretch-1)*x[2]"), theta=0.0, pre_stretch=lambda0, degree=2)  
 
+# bc_bottom = DirichletBC(V.sub(0), u_init, boundary_bottom)
+# bc_top = DirichletBC(V.sub(0), twist, boundary_top)
 bc_bottom = DirichletBC(V.sub(0).sub(2), Constant(0), facet_function, 1)
 bc_top = DirichletBC(V.sub(0), twist, facet_function, 2)
 bcs = [bc_bottom, bc_top]
@@ -314,8 +332,8 @@ while t <= Tfin+tol:
      
      if t == 0:
         u_0 = interpolate(u, U)
-        bc_bottom = DirichletBC(V.sub(0), u_0, boundary_bottom)
-        #bc_bottom = DirichletBC(V.sub(0), u_0, facet_function, 1)
+        #bc_bottom = DirichletBC(V.sub(0), u_0, boundary_bottom)
+        bc_bottom = DirichletBC(V.sub(0), u_0, facet_function, 1)
         bcs = [bc_bottom, bc_top]
         
      if t <= t_star:        
@@ -324,23 +342,27 @@ while t <= Tfin+tol:
      u.rename("u", "")
      p.rename("p","")
      
-     displacement_file << (u, t)
-     pressure_file << (p, t)
-     out_solution_file << up
+     if ((t < 3) or (t >= 3 and t % 1 == 0)):     
+         displacement_file << (u, t)
+         pressure_file << (p, t)
+         out_solution_file << up
 
-     # Compute the normal and the torque 
-     sigma = project(Cauchy(u,p),TS)    
-     rotation1.interpolate(Expression((("cos(atan2(x[1],x[0])+alpha*x[2])", "sin(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("-sin(atan2(x[1],x[0])+alpha*x[2])", "cos(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("0.0", "0.0", "1.0")), alpha=alpha, degree=2))  
-     rotation2.interpolate(Expression((("cos(atan2(x[1],x[0])+alpha*x[2])", "-sin(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("sin(atan2(x[1],x[0])+alpha*x[2])", "cos(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("0.0", "0.0", "1.0")), alpha=alpha, degree=2))
+         # Compute the normal and the torque 
+         sigma = project(Cauchy(u,p),TS)    
+         rotation1.interpolate(Expression((("cos(atan2(x[1],x[0])+alpha*x[2])", "sin(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("-sin(atan2(x[1],x[0])+alpha*x[2])", "cos(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("0.0", "0.0", "1.0")), alpha=alpha, degree=2))  
+         rotation2.interpolate(Expression((("cos(atan2(x[1],x[0])+alpha*x[2])", "-sin(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("sin(atan2(x[1],x[0])+alpha*x[2])", "cos(atan2(x[1],x[0])+alpha*x[2])", "0.0"),("0.0", "0.0", "1.0")), alpha=alpha, degree=2))
 
-     sigma_cyl = rotation1*sigma*rotation2
-     sigma_v = project(sigma_cyl,TS) #Put here Cauchy stress tensor in cylindrical coordinates
-     sigma_v.rename("T","")
-     T_file << (sigma_v, t)
+         sigma_cyl = rotation1*sigma*rotation2
+         sigma_v = project(sigma_cyl,TS) #Put here Cauchy stress tensor in cylindrical coordinates
+         sigma_v.rename("T","")
+         T_file << (sigma_v, t)
      
      up_prev.assign(up)
      
      # time increment
-     t += dt 
+     if t < 3:
+        t += dt
+     else: 
+        t += 1 
 
 f_out.close()
